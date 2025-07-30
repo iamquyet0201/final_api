@@ -12,7 +12,7 @@ app = FastAPI(title="AI 4 Green - API")
 # CORS mở rộng cho giai đoạn phát triển
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Tùy chỉnh thành domain cụ thể khi deploy
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -29,6 +29,7 @@ MODEL_PATH = "best.pt"
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError(f"Model file {MODEL_PATH} not found.")
 model = YOLO(MODEL_PATH)
+print(f"✅ Model {MODEL_PATH} loaded successfully.")
 
 LABELS_VI = {
     "plastic_bottle": "Chai nhựa",
@@ -59,10 +60,14 @@ def process_image(file_data: bytes) -> tuple[Image.Image, str]:
 def root():
     return {
         "status": "✅ API is running",
-        "model_name": model.model.args.get("name", "Unknown"),
+        "model_name": getattr(model, "name", "Unknown"),
         "num_classes": len(model.names),
         "class_names": {i: LABELS_VI.get(name, name) for i, name in model.names.items()}
     }
+
+@app.get("/healthz")
+def health_check():
+    return {"status": "ok"}
 
 @app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
