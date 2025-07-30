@@ -29,7 +29,6 @@ MODEL_PATH = "best.pt"
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError(f"Model file {MODEL_PATH} not found.")
 model = YOLO(MODEL_PATH)
-print(f"✅ Model {MODEL_PATH} loaded successfully.")
 
 LABELS_VI = {
     "plastic_bottle": "Chai nhựa",
@@ -64,10 +63,6 @@ def root():
         "num_classes": len(model.names),
         "class_names": {i: LABELS_VI.get(name, name) for i, name in model.names.items()}
     }
-
-@app.get("/healthz")
-def health_check():
-    return {"status": "ok"}
 
 @app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
