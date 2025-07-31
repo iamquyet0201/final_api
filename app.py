@@ -9,7 +9,7 @@ from collections import Counter
 
 app = FastAPI(title="AI 4 Green - API")
 
-# CORS mở rộng cho giai đoạn phát triển
+# Cho phép CORS toàn bộ (dùng cho dev, nên giới hạn khi deploy)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -18,18 +18,19 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Exception handler rõ ràng
+# Bắt lỗi toàn cục để không bị crash
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     print(f"[❌ Exception]: {str(exc)}")
     return PlainTextResponse(str(exc), status_code=500)
 
-# Kiểm tra và tải model
+# Load mô hình
 MODEL_PATH = "best.pt"
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError(f"Model file {MODEL_PATH} not found.")
 model = YOLO(MODEL_PATH)
 
+# Nhãn tiếng Việt tương ứng với lớp YOLO
 LABELS_VI = {
     "plastic_bottle": "Chai nhựa",
     "plastic_bottle_cap": "Nắp chai nhựa",
@@ -39,9 +40,11 @@ LABELS_VI = {
     "straw": "Ống hút"
 }
 
+# Thư mục tạm để xử lý ảnh
 TEMP_DIR = tempfile.mkdtemp()
 os.makedirs(TEMP_DIR, exist_ok=True)
 
+# Hàm xử lý ảnh: xóa nền, chuyển về nền trắng
 def process_image(file_data: bytes) -> tuple[Image.Image, str]:
     uid = str(uuid.uuid4())
     raw_path = os.path.join(TEMP_DIR, f"{uid}.png")
@@ -55,15 +58,17 @@ def process_image(file_data: bytes) -> tuple[Image.Image, str]:
     white_image.save(white_path, quality=95)
     return white_image, white_path
 
+# Route kiểm tra
 @app.get("/")
 def root():
     return {
         "status": "✅ API is running",
-        "model_name": getattr(model, "name", "Unknown"),
+        "model_name": model.model.args.get("name", "Unknown"),
         "num_classes": len(model.names),
         "class_names": {i: LABELS_VI.get(name, name) for i, name in model.names.items()}
     }
 
+# Route dự đoán
 @app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
     try:
@@ -90,12 +95,21 @@ async def predict(file: UploadFile = File(...)):
         if not os.path.exists(result_file):
             raise HTTPException(status_code=500, detail="Không tìm thấy ảnh kết quả.")
 
+        # Đếm số lượng vật thể theo lớp
         class_counts = Counter([model.names[int(cls)] for cls in results[0].boxes.cls])
-        items = [{"name": LABELS_VI.get(name, name), "quantity": count} for name, count in class_counts.items()]
 
+        # Trả về cả name (kỹ thuật) và label (hiển thị)
+        items = [{
+            "name": name,
+            "label": LABELS_VI.get(name, name),
+            "quantity": count
+        } for name, count in class_counts.items()]
+
+        # Mã hóa ảnh kết quả sang base64
         with open(result_file, "rb") as img_file:
             img_base64 = base64.b64encode(img_file.read()).decode("utf-8")
 
+        # Dọn thư mục tạm
         shutil.rmtree(TEMP_DIR, ignore_errors=True)
         os.makedirs(TEMP_DIR, exist_ok=True)
 
@@ -106,3 +120,7 @@ async def predict(file: UploadFile = File(...)):
 
     except HTTPException as http_err:
         raise http_err
+
+    except Exception as e:
+        print(f"[❌ Exception]: {str(e)}")
+        return JSONResponse(content={"detail": "Lỗi không xác định trong quá trình dự đoán."}, status_code=500)
