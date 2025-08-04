@@ -1,16 +1,32 @@
-from fastapi import FastAPI, File, UploadFile, HTTPException, Request
-from fastapi.responses import JSONResponse, PlainTextResponse
+from fastapi import FastAPI, HTTPException, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
-from ultralytics import YOLO
+from fastapi.responses import JSONResponse
+from typing import Any
 from PIL import Image
-from rembg import remove
+import numpy as np
+import cv2
+from ultralytics import YOLO
+import logging
+from io import BytesIO
 import base64
-import io
-from collections import Counter
-import os
+import gc  # để giải phóng bộ nhớ
 
-app = FastAPI(title="AI 4 Green - API")
+# Configure logging
+logging.basicConfig(level=logging.DEBUG)
 
+# Class mapping: 6 lớp
+class_mapping = {
+    0: 'plastic_bottle',
+    1: 'plastic_bottle_cap',
+    2: 'paper_cup',
+    3: 'tongue_depressor',
+    4: 'cardboard',
+    5: 'straw'
+}
+
+app = FastAPI()
+
+# Enable CORS
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -19,89 +35,84 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-@app.exception_handler(Exception)
-async def general_exception_handler(request: Request, exc: Exception):
-    print(f"[❌ Exception]: {str(exc)}")
-    return PlainTextResponse(str(exc), status_code=500)
+# Load YOLO model once
+try:
+    model = YOLO('best.pt')
+except Exception as e:
+    logging.error(f"Could not load model: {e}")
+    raise RuntimeError("Model load failed")
 
-MODEL_PATH = "best.pt"
-if not os.path.exists(MODEL_PATH):
-    raise FileNotFoundError(f"Model file {MODEL_PATH} not found.")
-model = YOLO(MODEL_PATH)
+# Helper functions
+def pil_to_cv2(image: Image.Image) -> np.ndarray:
+    return cv2.cvtColor(np.array(image), cv2.COLOR_RGB2BGR)
 
-LABELS_VI = {
-    "plastic_bottle": "Chai nhựa",
-    "plastic_bottle_cap": "Nắp chai nhựa",
-    "paper_cup": "Cốc giấy",
-    "tongue_depressor": "Que đè lưỡi",
-    "cardboard": "Bìa cứng",
-    "straw": "Ống hút"
-}
+def cv2_to_pil(image: np.ndarray) -> Image.Image:
+    return Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
 
-def remove_background_and_whiten(image_bytes: bytes) -> Image.Image:
-    try:
-        image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
-        fg = remove(image)
-        white_bg = Image.new("RGBA", fg.size, (255, 255, 255, 255))
-        white_image = Image.alpha_composite(white_bg, fg).convert("RGB")
-        return white_image
-    except Exception as e:
-        raise ValueError(f"Lỗi xử lý ảnh hoặc xóa nền: {str(e)}")
+def encode_image_to_base64(image: Image.Image) -> str:
+    if image.mode == "RGBA":
+        image = image.convert("RGB")
+    buffered = BytesIO()
+    image.save(buffered, format="JPEG")
+    return base64.b64encode(buffered.getvalue()).decode("utf-8")
 
 @app.get("/")
 def root():
-    return {
-        "status": "✅ API is running",
-        "model_name": model.model.args.get("name", "Unknown"),
-        "num_classes": len(model.names),
-        "class_names": {i: LABELS_VI.get(name, name) for i, name in model.names.items()}
-    }
+    return {"message": "API is working!"}
 
-@app.post("/predict/")
-async def predict(file: UploadFile = File(...)):
+@app.post("/det")
+async def detection(file: UploadFile = File(...)):
     try:
-        if not file.content_type.startswith("image/"):
-            raise HTTPException(status_code=400, detail="Chỉ chấp nhận file ảnh!")
-        file_data = await file.read()
-        if len(file_data) > 10 * 1024 * 1024:
-            raise HTTPException(status_code=400, detail="File quá lớn (tối đa 10MB)!")
+        image_data = await file.read()
+        image = Image.open(BytesIO(image_data)).convert("RGB")
+    except Exception:
+        raise HTTPException(status_code=400, detail="Cannot read image")
 
-        white_image = remove_background_and_whiten(file_data)
-
-        results = model.predict(white_image, conf=0.3)
-        result = results[0]
-
-        boxes = result.boxes
-        if boxes is None or boxes.cls is None:
-            class_counts = {}
-        else:
-            class_counts = Counter([model.names[int(cls)] for cls in boxes.cls])
-
-        items = [{
-            "name": name,
-            "label": LABELS_VI.get(name, name),
-            "quantity": count
-        } for name, count in class_counts.items()]
-
-        annotated_image = Image.fromarray(result.plot())
-        buffered = io.BytesIO()
-        annotated_image.save(buffered, format="JPEG")
-        img_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-        return JSONResponse(content={
-            "items": items,
-            "image": f"data:image/jpeg;base64,{img_base64}"
-        })
-
-    except HTTPException as http_err:
-        raise http_err
+    # ✅ Import rembg and remove background only when needed
+    try:
+        from rembg import remove
+        no_bg = remove(image)
+        no_bg = Image.open(BytesIO(no_bg)).convert("RGBA")
+        white_bg = Image.new("RGBA", no_bg.size, (255, 255, 255, 255))
+        image = Image.alpha_composite(white_bg, no_bg).convert("RGB")
     except Exception as e:
-        print(f"[❌ Exception]: {str(e)}")
-        return JSONResponse(content={"detail": "Lỗi không xác định trong quá trình dự đoán."}, status_code=500)
+        logging.error(f"Background removal failed: {e}")
+        raise HTTPException(status_code=500, detail="Failed to remove background")
+    finally:
+        # ✅ Optional: Remove rembg module from memory (symbolic), force garbage collection
+        del no_bg
+        del white_bg
+        gc.collect()
 
-# 👇 Bắt buộc để Render phát hiện cổng
-if __name__ == "__main__":
-    print("✅ main.py is running!")
-    import uvicorn
-    port = int(os.getenv("PORT", 10000))
-    uvicorn.run("main:app", host="0.0.0.0", port=port)
+    # 🔍 Run detection
+    results = model(source=image, conf=0.3, iou=0.5)
+    img_cv2 = pil_to_cv2(image)
+    class_counts = {}
+    det = [0] * len(class_mapping)
+
+    for result in results:
+        boxes = result.boxes.cpu().numpy()
+        xyxy = boxes.xyxy
+        cls_ids = boxes.cls.astype(int)
+
+        for box, cls_id in zip(xyxy, cls_ids):
+            cv2.rectangle(img_cv2, (int(box[0]), int(box[1])), (int(box[2]), int(box[3])), (0, 255, 0), 2)
+            class_name = class_mapping.get(cls_id, f"Unknown({cls_id})")
+            class_counts[class_name] = class_counts.get(class_name, 0) + 1
+            if cls_id < len(det):
+                det[cls_id] += 1
+
+    img_result = cv2_to_pil(img_cv2)
+
+    return {
+        "data": {
+            "base64_r": encode_image_to_base64(img_result),
+            "class_mapping": class_mapping,
+            "result": {
+                "dict": class_counts,
+                "det": det,
+            },
+        },
+        "msg": "success",
+        "code": 200
+    }
