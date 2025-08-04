@@ -11,7 +11,6 @@ import os
 
 app = FastAPI(title="AI 4 Green - API")
 
-# Cho phép CORS toàn bộ (dùng cho dev, nên giới hạn khi deploy)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -20,19 +19,16 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Bắt lỗi toàn cục để không bị crash
 @app.exception_handler(Exception)
 async def general_exception_handler(request: Request, exc: Exception):
     print(f"[❌ Exception]: {str(exc)}")
     return PlainTextResponse(str(exc), status_code=500)
 
-# Load mô hình
 MODEL_PATH = "best.pt"
 if not os.path.exists(MODEL_PATH):
     raise FileNotFoundError(f"Model file {MODEL_PATH} not found.")
 model = YOLO(MODEL_PATH)
 
-# Nhãn tiếng Việt tương ứng với lớp YOLO
 LABELS_VI = {
     "plastic_bottle": "Chai nhựa",
     "plastic_bottle_cap": "Nắp chai nhựa",
@@ -42,7 +38,6 @@ LABELS_VI = {
     "straw": "Ống hút"
 }
 
-# Hàm xử lý ảnh: xóa nền và chuyển sang nền trắng
 def remove_background_and_whiten(image_bytes: bytes) -> Image.Image:
     try:
         image = Image.open(io.BytesIO(image_bytes)).convert("RGBA")
@@ -71,14 +66,11 @@ async def predict(file: UploadFile = File(...)):
         if len(file_data) > 10 * 1024 * 1024:
             raise HTTPException(status_code=400, detail="File quá lớn (tối đa 10MB)!")
 
-        # Xử lý ảnh
         white_image = remove_background_and_whiten(file_data)
 
-        # Dự đoán
         results = model.predict(white_image, conf=0.3)
         result = results[0]
 
-        # Đếm số lượng vật thể
         boxes = result.boxes
         if boxes is None or boxes.cls is None:
             class_counts = {}
@@ -91,7 +83,6 @@ async def predict(file: UploadFile = File(...)):
             "quantity": count
         } for name, count in class_counts.items()]
 
-        # Annotate ảnh bằng .plot() và encode base64
         annotated_image = Image.fromarray(result.plot())
         buffered = io.BytesIO()
         annotated_image.save(buffered, format="JPEG")
@@ -107,3 +98,9 @@ async def predict(file: UploadFile = File(...)):
     except Exception as e:
         print(f"[❌ Exception]: {str(e)}")
         return JSONResponse(content={"detail": "Lỗi không xác định trong quá trình dự đoán."}, status_code=500)
+
+# 👇 Bắt buộc để Render phát hiện cổng
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.getenv("PORT", 10000))
+    uvicorn.run("app:app", host="0.0.0.0", port=port)
