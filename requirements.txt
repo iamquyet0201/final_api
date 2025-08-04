@@ -1,7 +1,7 @@
 fastapi
-uvicorn
+uvicorn[standard]
 pillow
+ultralytics
 python-multipart
 rembg
-ultralytics
 onnxruntime
