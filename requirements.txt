@@ -1,7 +1,9 @@
 fastapi
-uvicorn[standard]
+uvicorn
 pillow
+opencv-python
 ultralytics
+numpy
+python-multipart
 rembg
 onnxruntime
-python-multipart
