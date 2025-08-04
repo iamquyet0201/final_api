@@ -101,6 +101,7 @@ async def predict(file: UploadFile = File(...)):
 
 # 👇 Bắt buộc để Render phát hiện cổng
 if __name__ == "__main__":
+    print("✅ main.py is running!")
     import uvicorn
     port = int(os.getenv("PORT", 10000))
     uvicorn.run("main:app", host="0.0.0.0", port=port)
