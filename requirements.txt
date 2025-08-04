@@ -2,6 +2,6 @@ fastapi
 uvicorn[standard]
 pillow
 ultralytics
-python-multipart
 rembg
 onnxruntime
+python-multipart
