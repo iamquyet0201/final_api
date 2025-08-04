@@ -1,7 +1,7 @@
-fastapi==0.110.1
-uvicorn[standard]==0.29.0
-pillow==10.3.0
-ultralytics==8.1.25
-python-multipart==0.0.9
-rembg==2.0.51
-onnxruntime==1.15.1
+fastapi
+uvicorn
+pillow
+python-multipart
+rembg
+ultralytics
+onnxruntime
